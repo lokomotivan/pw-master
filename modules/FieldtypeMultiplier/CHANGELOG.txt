@@ -1,0 +1,52 @@
+Version 11
+==========
+- Maintenance release for fixes and optimizations.
+
+
+Version 10
+==========
+- Corrects an issue when used with date fields and output
+  in Lister/ListerPro columns.
+- Improves appearance in Lister/ListerPro output.   
+
+
+Version 9
+=========
+- Add support for AJAX-editing, whether using an AJAX 
+  visibility mode (PW 2.6.11+) or editing with ListerPro.
+- Improvements to non-editing output (like in Lister and 
+  non-editable fields). 
+
+
+Version 8
+=========
+- Add support for all selector search operators supported
+  by whatever field you are multiplying. 
+
+
+Version 6 & 7
+=============
+- Various bug fixes
+- Add support for input-based sorting that can work with
+  fields that previously fell apart on sorting (i.e. rich
+  text editors). 
+
+
+Version 5
+=========
+- Add renderValue() support, but better rendering of values 
+  in Lister. 
+
+
+Version 4
+=========
+
+- Added the ability to disable automatic removal of duplicates,
+  See the setting in Fields > [multiplier field] > Details.
+
+
+Version 3
+=========
+
+- Initial release version
+

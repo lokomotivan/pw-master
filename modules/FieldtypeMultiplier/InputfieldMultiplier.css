@@ -1,0 +1,66 @@
+
+/**
+ * ProcessWire Multiplier Inputfield
+ *
+ * Takes any single-value Fieldtype and turns it into a multiple-value fieldtype. 
+ *
+ * Part of the ProFields package
+ * Please do not distribute. 
+ * 
+ * Copyright 2017 by Ryan Cramer
+ *
+ * https://processwire.com
+ *
+ */
+
+.InputfieldMultiplierItem {
+	padding: 0.5em 0;
+}
+.InputfieldMultiplier .InputfieldMultiplierItem {
+	width: 100%; 
+}
+.InputfieldMultiplier .InputfieldMultiplierItem td {
+	vertical-align: middle;
+}
+
+.InputfieldMultiplier .InputfieldMultiplierItem td {
+	padding: 0.5em;
+}
+
+.InputfieldMultiplierSortHandle {
+	padding-right: 1%; 
+}
+
+.InputfieldMultiplierSortable .InputfieldMultiplierInput,
+.InputfieldMultiplierTrashable .InputfieldMultiplierInput {
+	width: 95%; 
+}
+
+.InputfieldMultiplierSortable.InputfieldMultiplierTrashable .InputfieldMultiplierInput {
+	width: 90%; 
+}
+
+.InputfieldMultiplierSortHandle:hover {
+	cursor: move; 
+}
+
+.InputfieldMultiplierSortInput input {
+	width: 4em;
+}
+
+.InputfieldMultiplierTrashable .InputfieldMultiplierTrash {
+	padding-left: 1%; 
+}
+
+.InputfieldMultiplierItemTrashed td input {
+	text-decoration: line-through;
+}
+
+.InputfieldMultiplierTrash {
+	cursor: pointer; 
+}
+
+.InputfieldMultiplierInactive {
+	display: none; 
+}
+

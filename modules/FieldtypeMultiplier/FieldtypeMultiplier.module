@@ -1,0 +1,386 @@
+<?php
+
+/**
+ * ProcessWire Multiplier Fieldtype
+ *
+ * Takes any single-value Fieldtype and turns it into a multiple-value fieldtype. 
+ *
+ * Part of the ProFields package
+ * Please do not distribute. 
+ * 
+ * Copyright 2017 by Ryan Cramer
+ *
+ * https://processwire.com
+ *
+ * @todo: Prevent autojoin option from being used
+ *
+ */
+
+require_once(dirname(__FILE__) . '/MultiplierArray.php'); 
+
+class FieldtypeMultiplier extends FieldtypeMulti {
+
+	public static function getModuleInfo() {
+		return array(
+			'title' => __('ProFields: Multiplier', __FILE__),
+			'summary' => __('Turns any Fieldtype into a multiple-value version of itself.', __FILE__),
+			'version' => 11,
+			'installs' => array('InputfieldMultiplier') // , 'InputfieldMultiplierVariable'),
+			);
+	}
+
+	/**
+	 * Get the Fieldtype being multiplied for Field
+	 *
+	 * @param Field $field 
+	 * @return Fieldtype
+	 *
+	 */
+	public function getFieldtype(Field $field) {
+		if($field->get('fieldtypeClass')) {
+			$fieldtype = $this->fieldtypes->get($field->get('fieldtypeClass')); 
+		} else {
+			$fieldtype = $this->fieldtypes->get('FieldtypeText');
+		}
+		return $fieldtype; 
+	}
+
+	/**
+	 * Get a blank MultiplierArray
+	 *
+	 * @param Page $page
+	 * @param Field $field 
+	 * @return MultiplierArray
+	 *
+	 */
+	public function getBlankValue(Page $page, Field $field) {
+		$a = new MultiplierArray();
+		if($field->get('allowDups')) $a->data('allowDups', true); 
+		return $a; 
+	}
+
+	/**
+	 * Sanitize a Multiplier value before population to a Page
+	 *
+	 * @param Page $page
+	 * @param Field $field 
+	 * @param MultiplierArray|array $value
+	 * @return MultiplierArray
+	 *
+	 */
+	public function sanitizeValue(Page $page, Field $field, $value) {
+		if(empty($value)) return $this->getBlankValue($page, $field); 
+		if(is_array($value)) {
+			$v = $this->getBlankValue($page, $field);
+			$v->import($value); 
+			$value = $v; 
+		}
+		if(count($value)) {
+			$fieldtype = $this->getFieldtype($field); 
+			foreach($value as $k => $v) {
+				$value[$k] = $fieldtype->sanitizeValue($page, $field, $v); 
+			}
+		}
+		return $value; 
+	}
+	
+	/**
+	 * Prepare a MultiplierArray for export
+	 *
+	 * @param Page $page
+	 * @param Field $field 
+	 * @param MultiplierArray $value
+	 * @param array $options
+	 * @return array
+	 *
+	 */
+	public function ___exportValue(Page $page, Field $field, $value, array $options = array()) {
+		$value = $this->sleepValue($page, $field, $value); 
+		foreach($value as $k => $v) {
+			// remove empty values
+			if(!strlen($v)) unset($value[$k]); 
+		}
+		return $value; 
+	}
+
+	/**
+	 * Format a Multiplier value for output
+	 *
+	 * @param Page $page
+	 * @param Field $field 
+	 * @param MultiplierArray $value
+	 * @return MultiplierArray
+	 *
+	 */
+	public function ___formatValue(Page $page, Field $field, $value) {
+		// delegate to other fieldtype
+		if(!count($value)) return $value; 
+		$fieldtype = $this->getFieldtype($field); 
+		$formatted = $this->getBlankValue($page, $field);
+
+		foreach($value as $k => $v) {
+			$formatted[$k] = $fieldtype->___formatValue($page, $field, $v); 
+		}
+		
+		$formatted->formatted(true);
+
+		return $formatted; 
+	}
+
+	public function ___markupValue(Page $page, Field $field, $value = null, $property = '') {
+		if(is_null($value) || !$value instanceof MultiplierArray || $value->formatted()) {
+			$value = $page->getUnformatted($field->name);
+		}
+		$inputfield = $field->getInputfield($page);
+		$inputfield->attr('value', $value);
+		return $inputfield->renderValue();
+	}
+
+	/**
+	 * Return the database schema in specified format
+	 *
+	 * @param Field $field
+	 * @return array
+	 *
+	 */
+	public function getDatabaseSchema(Field $field) {
+
+		$fieldtype = $this->getFieldtype($field); 
+		$schema = parent::getDatabaseSchema($field);
+		//$schema['multiplier_name'] = "VARCHAR(255) NOT NULL DEFAULT ''";
+		$schemaKeys = $schema['keys'];
+		$fieldtypeSchema = $fieldtype->getDatabaseSchema($field); 
+		$schema = array_merge($schema, $fieldtypeSchema); 
+		$schema['keys'] = $schemaKeys; // retain
+		$schema['keys']['data'] = $fieldtypeSchema['keys']['data'];
+
+		if($field->id && $field->get('fieldtypeClass') != $field->get('schemaClass')) {
+			// schema has changed
+			$database = $this->wire('database');
+			$table = $database->escapeTable($field->getTable());
+
+			try {
+				// determine non-primary indexes and drop them
+				$dropKeys = array();
+				$query = $database->prepare("SHOW INDEXES FROM `$table` WHERE key_name!='PRIMARY'"); 
+				$query->execute();
+				while($row = $query->fetch(PDO::FETCH_ASSOC)) {
+					$dropKeys[] = $row['Key_name'];	
+				}
+				foreach($dropKeys as $keyName) {
+					$database->exec("ALTER TABLE `$table` DROP INDEX `$keyName`"); 
+				}
+
+			} catch(Exception $e) {
+				$this->error($e->getMessage()); 
+			}
+
+			try {
+				// modify the data column for the new type
+				$database->exec("ALTER TABLE `$table` MODIFY `data` $schema[data]");
+
+				// add the indexes
+				foreach($schema['keys'] as $keyName => $keyType) {
+					if($keyName == 'primary') continue; 
+					$database->exec("ALTER TABLE `$table` ADD $keyType"); 
+				}
+
+				// update the field setting
+				$field->set('schemaClass', $field->get('fieldtypeClass'));
+				$field->save();
+				$this->message("Modified schema for field: $field->name"); 
+
+			} catch(Exception $e) {
+				$this->error("Error modifying schema for field: $field->name"); 
+			}
+		}
+
+		return $schema;
+	}
+
+	/**
+	 * Return the Inputfield used by this Fieldtype
+	 *
+	 * @param Page $page
+	 * @param Field $field 
+	 * @return Inputfield
+	 * 
+	 */
+	public function getInputfield(Page $page, Field $field) {
+		/** @var InputfieldMultiplier $inputfield */
+		$inputfield = $this->modules->get('InputfieldMultiplier'); 
+		$inputfield->setField($field); 
+		$inputfield->setFieldtype($this->getFieldtype($field)); 
+		$inputfield->setPage($page); 
+		return $inputfield; 
+	}
+
+	/**
+	 * Convert a stored value to a runtime value
+	 *
+	 * @param Page $page
+	 * @param Field $field 
+	 * @param array $value
+	 * @return MultiplierArray
+	 * 
+	 */
+	public function ___wakeupValue(Page $page, Field $field, $value) {
+
+		$fieldtype = $this->getFieldtype($field); 
+		$wakeupValue = $this->getBlankValue($page, $field);
+		$allowDups = $field->get('allowDups'); 
+		$hashes = array(); 
+
+		foreach($value as $k => $v) {
+			$v = $this->wakeupFieldtypeValue($fieldtype, $page, $field, $v); 
+			if(!$allowDups) {
+				// necessary only if allowDups applied as a new setting to existing data
+				$hash = md5($v);
+				if(isset($hashes[$hash])) continue; 
+				$hashes[$hash] = true; 
+			}
+			$wakeupValue[$k] = $v;
+		}
+
+		return $wakeupValue; 
+	}
+
+	/**
+	 * @param Fieldtype $fieldtype
+	 * @param Page $page
+	 * @param Field $field
+	 * @param mixed $value
+	 * @return mixed
+	 * 
+	 */
+	public function wakeupFieldtypeValue($fieldtype, $page, $field, $value) {
+		return $fieldtype->___wakeupValue($page, $field, $value); 
+	}
+
+	/**
+	 * Convert a runtime value to a value ready for storage
+	 *
+	 * @param Page $page
+	 * @param Field $field 
+	 * @param MultiplierArray $value
+	 * @return array
+	 * @throws WireException
+	 * 
+	 */
+	public function ___sleepValue(Page $page, Field $field, $value) {
+		if(!$value instanceof MultiplierArray) throw new WireException('Only accepts MultiplierArray value here'); 
+		$fieldtype = $this->getFieldtype($field); 
+		$n = 0;
+		$sleepValue = array();
+		foreach($value as $k => $v) {
+			$v = $this->sleepFieldtypeValue($fieldtype, $page, $field, $v); 
+			if(!strlen("$v")) continue; 
+			$sleepValue[$n] = $v;
+			$n++;
+		}
+
+		return $sleepValue; 
+	}
+
+	/**
+	 * @param Fieldtype $fieldtype
+	 * @param Page $page
+	 * @param Field $field
+	 * @param mixed $value
+	 * @return mixed
+	 *
+	 */
+	public function sleepFieldtypeValue($fieldtype, $page, $field, $value) {
+		return $fieldtype->___sleepValue($page, $field, $value); 
+	}
+
+	/**
+	 * Update a DatabaseQuerySelect object to match a Page
+	 *
+	 * @param DatabaseQuerySelect $query
+	 * @param string $table
+	 * @param string $subfield
+	 * @param string $operator
+	 * @param string $value
+	 * @return DatabaseQuerySelect
+	 * @throws WireException
+	 *
+	 */
+	public function getMatchQuery($query, $table, $subfield, $operator, $value) {
+		$fieldtype = $this->getFieldtype($query->field); 
+		return $fieldtype->getMatchQuery($query, $table, $subfield, $operator, $value); 
+	}
+	
+	/**
+	 * Get Inputfields needed to configure the Fieldtype (on details tab)
+	 *
+	 * @param Field $field 
+	 * @return InputfieldWrapper
+	 * 
+	 */
+	public function ___getConfigInputfields(Field $field) {
+
+		$info = self::getModuleInfo();
+		$inputfields = parent::___getConfigInputfields($field);
+
+		$fieldset = $this->wire('modules')->get('InputfieldFieldset'); 
+		$fieldset->label = $info['title'];
+		$inputfields->add($fieldset); 
+
+		/** @var InputfieldSelect $f */
+		$f = $this->modules->get('InputfieldSelect'); 
+		$f->attr('name', 'fieldtypeClass');
+		$f->label = $this->_('Field Type to Multiply');
+		$f->notes = $this->_('Click Save after changing this to reveal additional configuration options on the Details and Input tabs.'); 
+		$f->required = true; 
+		$nullPage = new NullPage();
+		$nullField = new Field();
+		$incompatibleTypes = array('FieldtypePageTitle', 'FieldtypePassword', 'FieldtypeCheckbox', 'FieldtypeTextareas'); 
+
+		foreach($this->fieldtypes as $ft) {
+			if($ft instanceof FieldtypeMulti || $ft instanceof FieldtypeFieldsetOpen) continue; 
+			// exclude fieldtypes known to be incompatible
+			if(in_array($ft->className(), $incompatibleTypes)) continue; 
+			$schema = $ft->getDatabaseSchema($nullField, $nullPage); 
+			// check if this schema has any fields other than those of the basic fieldtypes...
+			unset($schema['keys'], $schema['pages_id'], $schema['xtra'], $schema['data']); 
+			// ...if it does, skip it
+			if(count($schema)) continue; 
+
+			$f->addOption($ft->className(), str_replace('Fieldtype', '', $ft->className())); 
+		}
+		if(!$field->get('fieldtypeClass')) $field->set('fieldtypeClass', 'FieldtypeText');
+		$f->attr('value', $field->get('fieldtypeClass')); 
+		$fieldset->add($f); 
+
+		if($field->get('fieldtypeClass')) {
+			$fieldset2 = $this->wire('modules')->get('InputfieldFieldset'); 
+			$fieldset2->label = str_replace('Fieldtype', '', $field->get('fieldtypeClass')); 
+			$fieldtype = $this->getFieldtype($field); 
+			$n = 0;
+			foreach($fieldtype->getConfigInputfields($field) as $in) {
+				if($inputfields->getChildByName($in->name)) continue; 
+				$fieldset2->add($in); 
+				$n++;
+			}
+			if($n) $inputfields->add($fieldset2);
+		}
+
+		$f = $this->modules->get('InputfieldCheckbox'); 
+		$f->attr('name', 'allowDups'); 
+		$f->label = $this->_('Allow Duplicate Values?'); 
+		$f->description = $this->_('When checked, the same value may appear in multiple rows. When not checked, duplicate values are automatically removed when the page is saved.'); 
+		if($field->get('allowDups')) $f->attr('checked', 'checked'); 
+		$f->collapsed = Inputfield::collapsedBlank;
+		$fieldset->add($f); 
+
+		$f = $this->modules->get('InputfieldHidden');
+		$f->attr('name', 'schemaClass');
+		$f->attr('value', $field->get('schemaClass'));
+		$fieldset->add($f); 
+
+		return $inputfields; 
+	}
+
+}
+
